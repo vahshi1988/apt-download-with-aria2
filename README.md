@@ -1,106 +1,132 @@
 # apt-download-with-aria2
 
-<div dir="rtl">
+Accelerate direct downloads and `apt` package installations using [aria2](https://aria2.github.io/) — multi-connection, parallel, and resumable.
 
-دانلود سریع فایل‌ها و پکیج‌های `apt` با [aria2](https://aria2.github.io/) — چند اتصاله، هم‌زمان و قابل ادامه.
+This repository provides two shell scripts:
 
-این ریپو شامل دو اسکریپت است:
-
-| فایل | کاربرد |
+| Script | Description |
 |---|---|
-| `aria2-dl.sh` | هر لینک دانلودی را می‌گیرد و با aria2 (تا ۱۶ اتصال) دانلود می‌کند |
-| `apt-a2.sh` | پکیج‌های `apt` را با `aria2-dl.sh` دانلود می‌کند و بعد `apt` نصبشان می‌کند |
+| `aria2-dl.sh` | CLI wrapper to download any URL with multi-connection acceleration (up to 16 connections) via aria2. |
+| `apt-a2.sh` | Integrates `apt` with aria2: fetches package URLs, downloads them accelerated in parallel to apt's cache, then completes the installation with standard `apt`. |
 
-## پیش‌نیازها
+---
 
-</div>
+## Prerequisites
+
+Ensure `aria2` and `curl` are installed:
 
 ```bash
-sudo apt install aria2 curl
+sudo apt update && sudo apt install -y aria2 curl
 ```
 
-<div dir="rtl">
+---
 
-## نصب
+## Installation
 
-</div>
+Clone the repository and create symbolic links in your `PATH` (e.g. `~/.local/bin`):
 
 ```bash
 git clone https://github.com/vahshi1988/apt-download-with-aria2.git
 cd apt-download-with-aria2
 chmod +x aria2-dl.sh apt-a2.sh
+
 mkdir -p ~/.local/bin
 ln -s "$PWD/aria2-dl.sh" ~/.local/bin/a2
 ln -s "$PWD/apt-a2.sh"   ~/.local/bin/apt-a2
 ```
 
-<div dir="rtl">
-
-> دو فایل باید کنار هم باشند (یا مسیر `aria2-dl.sh` را با متغیر `A2DL` بدهید).
+> **Note:** Keep both scripts in the same directory, or specify the location of `aria2-dl.sh` using the `A2DL` environment variable.
 
 ---
 
-## aria2-dl.sh
+## Usage
 
-</div>
+### 1. `aria2-dl.sh` (or `a2`)
+
+Download single or multiple files with up to 16 connections per server:
 
 ```bash
-a2 "https://example.com/file.zip"              # دانلود با 16 اتصال در ~/Downloads
-a2                                              # لینک را می‌پرسد
-a2 -d ~/Videos -o movie.mkv "URL"               # پوشه و نام دلخواه
-a2 "URL1" "URL2" "URL3"                         # چند لینک (تا 5 تا هم‌زمان)
-a2 -i links.txt                                 # لیست لینک‌ها از فایل
-a2 -p "URL"                                     # فقط دستور aria2c را چاپ کن
-ARIA2_SECRET=token a2 -r "URL"                  # ارسال به aria2 در حال اجرا (RPC)
+# Download a file to ~/Downloads with 16 connections
+a2 "https://example.com/archive.zip"
+
+# Interactive prompt (if called with no arguments)
+a2
+
+# Specify output directory and custom filename
+a2 -d ~/Videos -o movie.mkv "https://example.com/video.mp4"
+
+# Download multiple URLs concurrently (up to 5 concurrent downloads)
+a2 "https://example.com/file1.zip" "https://example.com/file2.zip"
+
+# Download URLs listed in a text file (one URL per line)
+a2 -i links.txt
+
+# Dry run: print equivalent aria2c command without downloading
+a2 -p "https://example.com/archive.zip"
+
+# Send download to a running aria2 RPC daemon
+ARIA2_SECRET="mysecret" a2 -r "https://example.com/file.iso"
 ```
 
-<div dir="rtl">
+#### Options
 
-| گزینه | توضیح |
+| Flag | Description |
 |---|---|
-| `-d DIR` | پوشه ذخیره (پیش‌فرض: `~/Downloads`) |
-| `-o NAME` | نام فایل خروجی (فقط برای یک لینک) |
-| `-x N` | تعداد اتصال (پیش‌فرض و حداکثر: 16) |
-| `-i FILE` | فایل حاوی لینک‌ها (هر خط یک لینک) |
-| `-R URL` | Referer |
-| `-c FILE` | فایل کوکی (فرمت Netscape) |
-| `-H HEADER` | هدر اضافه (قابل تکرار) |
-| `-p` | فقط دستور را چاپ کن |
-| `-r` | ارسال به aria2 RPC (`ARIA2_RPC`، `ARIA2_SECRET`) |
+| `-d DIR` | Download directory (default: `~/Downloads`) |
+| `-o NAME` | Output filename (for single URL downloads) |
+| `-x N` | Number of connections per server (default: 16, max: 16) |
+| `-i FILE` | Input file containing URLs (one per line) |
+| `-R URL` | Custom Referer header |
+| `-c FILE` | Load cookies from Netscape-format cookie file |
+| `-H HEADER` | Custom HTTP header (can be repeated) |
+| `-p` | Print command only (dry-run) |
+| `-r` | Submit URL to running aria2 JSON-RPC daemon (`ARIA2_RPC`, `ARIA2_SECRET`) |
+| `-h` | Display help and usage information |
 
 ---
 
-## apt-a2.sh
+### 2. `apt-a2.sh` (or `apt-a2`)
 
-</div>
+Use aria2's multi-connection engine to accelerate package downloads for Ubuntu/Debian `apt`:
 
 ```bash
-apt-a2 install htop vlc
+# Install packages
+apt-a2 install htop vlc build-essential
+
+# Upgrade packages
 apt-a2 upgrade
 apt-a2 full-upgrade
-apt-a2 --dry-run upgrade      # فقط نشان بده چه چیزی دانلود می‌شود
-apt-a2 update                 # بقیه دستورها مستقیم به apt می‌روند
+
+# Reinstall packages
+apt-a2 reinstall bash
+
+# Preview packages and sizes to be downloaded
+apt-a2 --dry-run upgrade
+
+# Non-download commands pass directly through to standard apt
+apt-a2 update
+apt-a2 search nginx
 ```
 
-<div dir="rtl">
+> **Note:** Automatically invokes `sudo` when root permissions are required.
 
-خودش در صورت نیاز `sudo` می‌گیرد.
+#### How It Works
 
-### نحوه کار
+1. Queries package URLs and dependencies via `apt-get --print-uris`.
+2. Identifies missing packages (skips packages already verified in `/var/cache/apt/archives`).
+3. Downloads archives concurrently with `aria2-dl.sh` directly into `/var/cache/apt/archives/partial`.
+4. Moves successfully completed `.deb` packages into `/var/cache/apt/archives`.
+5. Handover to native `apt`, which verifies cryptographic hashes and GPG signatures before unpacking and installing.
 
-1. لیست لینک پکیج‌ها با `apt-get --print-uris` گرفته می‌شود.
-2. فایل‌هایی که در کش هستند رد می‌شوند و بقیه با `aria2-dl.sh` دانلود می‌شوند.
-3. فایل‌های کامل‌شده به `/var/cache/apt/archives` منتقل می‌شوند.
-4. `apt` اجرا می‌شود، هش فایل‌ها را خودش بررسی می‌کند و از کش نصب می‌کند.
-   اگر دانلود پکیجی با aria2 شکست بخورد، `apt` خودش آن را دانلود می‌کند.
+#### Environment Variables
 
-| متغیر | توضیح |
+| Variable | Description |
 |---|---|
-| `A2DL` | مسیر `aria2-dl.sh` (پیش‌فرض: کنار `apt-a2.sh`) |
-| `A2_CONN` | تعداد اتصال برای هر فایل (پیش‌فرض: 16) |
+| `A2DL` | Path to `aria2-dl.sh` (default: script's own folder) |
+| `A2_CONN` | Max connections per package download (default: 16) |
 
-## لایسنس
+---
 
-[MIT](LICENSE)
+## License
 
-</div>
+This project is licensed under the [MIT License](LICENSE).

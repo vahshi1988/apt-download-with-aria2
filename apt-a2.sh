@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# apt-a2 — پکیج‌های apt را با aria2 (از طریق aria2-dl.sh) دانلود می‌کند و بعد apt نصبشان می‌کند
+# apt-a2 — Download apt packages via aria2 (using aria2-dl.sh) and install via apt
 #
-# استفاده:
-#   apt-a2 install <pkg...>        نصب
-#   apt-a2 reinstall <pkg...>      نصب مجدد
-#   apt-a2 upgrade                 ارتقا
-#   apt-a2 full-upgrade            ارتقای کامل (dist-upgrade)
-#   apt-a2 --dry-run <دستور...>    فقط لیست فایل‌هایی که دانلود می‌شن رو نشون بده
-#   apt-a2 <هر دستور دیگه>         (update, remove, search, ...) مستقیم به apt داده می‌شه
+# Usage:
+#   apt-a2 install <pkg...>        Install packages
+#   apt-a2 reinstall <pkg...>      Reinstall packages
+#   apt-a2 upgrade                 Upgrade packages
+#   apt-a2 full-upgrade            Dist-upgrade packages
+#   apt-a2 --dry-run <command...>  Preview files to be downloaded
+#   apt-a2 <any other command>     Pass through to standard apt (update, remove, search, ...)
 #
-# متغیرها:
-#   A2DL      مسیر aria2-dl.sh (پیش‌فرض: کنار همین فایل)
-#   A2_CONN   تعداد اتصال برای هر فایل (پیش‌فرض: 16)
+# Environment Variables:
+#   A2DL      Path to aria2-dl.sh (default: same directory as this script)
+#   A2_CONN   Connections per package (default: 16)
 
 set -euo pipefail
 
@@ -31,16 +31,16 @@ if [[ "$1" == --dry-run ]]; then DRY=1; shift; [[ $# -eq 0 ]] && usage 1; fi
 cmd=$1
 case "$cmd" in
   install|reinstall|upgrade|full-upgrade|dist-upgrade) ;;
-  *) (( DRY )) && { echo "این دستور چیزی دانلود نمی‌کنه."; exit 0; }
+  *) (( DRY )) && { echo "This command does not download packages."; exit 0; }
      (( EUID == 0 )) && exec apt "$@" || exec sudo apt "$@" ;;
 esac
 
-# برای دانلود و نصب دسترسی root لازمه
+# Root privileges required for package management
 if (( ! DRY && EUID != 0 )); then exec sudo A2DL="$A2DL" A2_CONN="$A2_CONN" "$SELF" "$@"; fi
 
-[[ -x "$A2DL" ]] || { echo "✘ aria2-dl.sh پیدا نشد: $A2DL" >&2; exit 1; }
+[[ -x "$A2DL" ]] || { echo "Error: aria2-dl.sh not found: $A2DL" >&2; exit 1; }
 
-# معادل apt-get برای گرفتن لیست لینک‌ها
+# Map commands to apt-get equivalent to retrieve download URLs
 rest=("${@:2}")
 case "$cmd" in
   reinstall)    getargs=(install --reinstall "${rest[@]}") ;;
@@ -49,7 +49,7 @@ case "$cmd" in
 esac
 
 if ! uris=$(apt-get -qq --print-uris "${getargs[@]}" 2>/dev/null); then
-  # خطا (مثلاً پکیج پیدا نشد) — بذار خود apt پیغام درست رو نشون بده
+  # Fallback to standard apt to display official error messages
   (( DRY )) && { apt-get -qq --print-uris "${getargs[@]}"; exit 1; }
   exec apt "$@"
 fi
@@ -57,11 +57,11 @@ fi
 LIST=$(mktemp)
 FILES=()
 total=0
-# فرمت هر خط: 'URL' FILENAME SIZE HASH
+# Line format: 'URL' FILENAME SIZE HASH
 while read -r url file size _; do
   [[ "$url" == \'* ]] || continue
   url=${url#\'}; url=${url%\'}
-  # اگه قبلاً کامل توی کش هست، رد شو
+  # Skip already fully cached archives
   if [[ -f "$ARCHIVES/$file" ]] && [[ $(stat -c%s "$ARCHIVES/$file") == "$size" ]]; then continue; fi
   printf '%s\n  out=%s\n' "$url" "$file" >> "$LIST"
   FILES+=("$file")
@@ -70,30 +70,30 @@ done <<<"$uris"
 
 if (( ${#FILES[@]} == 0 )); then
   rm -f "$LIST"
-  (( DRY )) && { echo "چیزی برای دانلود نیست."; exit 0; }
+  (( DRY )) && { echo "Nothing to download."; exit 0; }
   exec apt "$@"
 fi
 
 human=$(numfmt --to=iec --suffix=B "$total")
 
 if (( DRY )); then
-  echo "${#FILES[@]} فایل، مجموعاً $human:"
+  echo "${#FILES[@]} files, total $human:"
   grep -v '^  ' "$LIST"
   rm -f "$LIST"
   exit 0
 fi
 
-echo "⬇  ${#FILES[@]} پکیج ($human) با aria2 دانلود می‌شه..."
+echo "Downloading ${#FILES[@]} packages ($human) via aria2..."
 "$A2DL" -d "$PARTIAL" -x "$A2_CONN" -i "$LIST" \
-  || echo "⚠  بعضی پکیج‌ها با aria2 دانلود نشدن؛ apt خودش بقیه رو می‌گیره." >&2
+  || echo "Warning: some packages failed to download via aria2; apt will fetch remaining packages." >&2
 rm -f "$LIST"
 
-# فقط فایل‌هایی که کامل دانلود شدن (فایل کنترلی .aria2 ندارن) رو به کش apt منتقل کن
+# Move fully completed packages (no remaining .aria2 control file) to apt archives cache
 for f in "${FILES[@]}"; do
   if [[ -f "$PARTIAL/$f" && ! -e "$PARTIAL/$f.aria2" ]]; then
     mv -f "$PARTIAL/$f" "$ARCHIVES/$f"
   fi
 done
 
-# apt هش فایل‌ها رو خودش چک می‌کنه و از کش نصب می‌کنه
+# Execute apt to verify integrity and install from cache
 exec apt "$@"

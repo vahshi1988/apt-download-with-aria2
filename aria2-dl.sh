@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# aria2-dl.sh — لینک دانلود را می‌گیرد و با aria2 (چند اتصاله) دانلود می‌کند
+# aria2-dl.sh — Multi-connection download accelerator wrapper for aria2
 #
-# استفاده:
-#   aria2-dl.sh <URL> [URL ...]            دانلود مستقیم
-#   aria2-dl.sh                             لینک را از ورودی می‌پرسد
-#   aria2-dl.sh -i links.txt                دانلود لیست لینک‌ها از فایل
-#   aria2-dl.sh -p <URL>                    فقط دستور aria2c را چاپ کن (اجرا نکن)
-#   aria2-dl.sh -r <URL>                    ارسال لینک به aria2 در حال اجرا (RPC)
+# Usage:
+#   aria2-dl.sh <URL> [URL ...]            Download URLs directly
+#   aria2-dl.sh                             Prompt for URL interactively
+#   aria2-dl.sh -i links.txt                Download list of URLs from file
+#   aria2-dl.sh -p <URL>                    Print equivalent aria2c command without executing
+#   aria2-dl.sh -r <URL>                    Send URL to running aria2 RPC daemon
 #
-# گزینه‌ها:
-#   -d DIR     پوشه ذخیره (پیش‌فرض: ~/Downloads)
-#   -o NAME    نام فایل خروجی (فقط برای یک لینک)
-#   -x N       تعداد اتصال‌ها (پیش‌فرض: 16)
-#   -i FILE    فایل حاوی لینک‌ها (هر خط یک لینک)
-#   -R URL     Referer
-#   -c FILE    فایل کوکی (فرمت Netscape)
-#   -H HEADER  هدر اضافه، مثلا: -H "Authorization: Bearer xxx" (قابل تکرار)
-#   -p         فقط دستور را چاپ کن
-#   -r         ارسال به RPC (آدرس: $ARIA2_RPC یا http://localhost:6800/jsonrpc ، توکن: $ARIA2_SECRET)
-#   -h         راهنما
+# Options:
+#   -d DIR     Download directory (default: ~/Downloads)
+#   -o NAME    Output filename (single URL only)
+#   -x N       Max connections per server (default: 16)
+#   -i FILE    File containing URLs (one per line)
+#   -R URL     Referer header
+#   -c FILE    Cookie file (Netscape format)
+#   -H HEADER  Additional HTTP header (can be repeated)
+#   -p         Print command only
+#   -r         Send to RPC ($ARIA2_RPC or http://localhost:6800/jsonrpc, secret: $ARIA2_SECRET)
+#   -h         Show help
 
 set -euo pipefail
 
@@ -47,30 +47,30 @@ while getopts ":d:o:x:i:R:c:H:prh" opt; do
     p) PRINT_ONLY=1 ;;
     r) RPC=1 ;;
     h) usage 0 ;;
-    :) echo "گزینه -$OPTARG نیاز به مقدار دارد" >&2; usage 1 ;;
-    \?) echo "گزینه نامعتبر: -$OPTARG" >&2; usage 1 ;;
+    :) echo "Option -$OPTARG requires an argument" >&2; usage 1 ;;
+    \?) echo "Invalid option: -$OPTARG" >&2; usage 1 ;;
   esac
 done
 shift $((OPTIND - 1))
 
 URLS=("$@")
 
-# اگر لینکی داده نشده و فایل ورودی هم نیست، از کاربر بپرس
+# If no URLs provided and no input file, prompt user
 if [[ ${#URLS[@]} -eq 0 && -z "$INPUT_FILE" ]]; then
-  read -rp "لینک دانلود را وارد کنید: " link
-  [[ -z "$link" ]] && { echo "لینکی وارد نشد." >&2; exit 1; }
+  read -rp "Enter download URL: " link
+  [[ -z "$link" ]] && { echo "No URL provided." >&2; exit 1; }
   URLS=("$link")
 fi
 
-(( CONN > 16 )) && CONN=16   # aria2 حداکثر 16 اتصال به هر سرور را قبول می‌کند
+(( CONN > 16 )) && CONN=16   # aria2 allows max 16 connections per server
 
-die() { echo "✘ $*" >&2; exit 1; }
+die() { echo "Error: $*" >&2; exit 1; }
 
-(( ${#URLS[@]} > 1 )) && [[ -n "$OUT" ]] && die "-o فقط با یک لینک قابل استفاده است."
+(( ${#URLS[@]} > 1 )) && [[ -n "$OUT" ]] && die "-o can only be used with a single URL."
 
-# ---------- حالت RPC: ارسال به aria2 در حال اجرا ----------
+# ---------- RPC Mode: send to running aria2 daemon ----------
 if (( RPC )); then
-  command -v curl >/dev/null || { echo "curl نصب نیست." >&2; exit 1; }
+  command -v curl >/dev/null || { echo "curl is required for RPC mode." >&2; exit 1; }
   RPC_URL="${ARIA2_RPC:-http://localhost:6800/jsonrpc}"
   [[ -n "$INPUT_FILE" ]] && mapfile -t -O "${#URLS[@]}" URLS < <(grep -vE '^\s*(#|$)' "$INPUT_FILE")
   json_esc() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '%s' "$s"; }
@@ -82,13 +82,13 @@ if (( RPC )); then
     [[ -n "${ARIA2_SECRET:-}" ]] && params="\"token:${ARIA2_SECRET}\",${params}"
     resp=$(curl -fsS "$RPC_URL" -H 'Content-Type: application/json' \
       -d "{\"jsonrpc\":\"2.0\",\"id\":\"a2\",\"method\":\"aria2.addUri\",\"params\":[${params}]}") \
-      || { echo "اتصال به RPC در $RPC_URL ناموفق بود." >&2; exit 1; }
-    echo "✔ اضافه شد: $u  →  $resp"
+      || { echo "Connection to RPC at $RPC_URL failed." >&2; exit 1; }
+    echo "Added: $u -> $resp"
   done
   exit 0
 fi
 
-# ---------- ساخت دستور aria2c ----------
+# ---------- Build aria2c command ----------
 CMD=(aria2c
   --continue=true
   --max-connection-per-server="$CONN"
@@ -109,7 +109,7 @@ CMD=(aria2c
 [[ -n "$COOKIE" ]]  && CMD+=(--load-cookies="$COOKIE")
 for h in "${HEADERS[@]}"; do CMD+=(--header="$h"); done
 [[ -n "$INPUT_FILE" ]] && CMD+=(--input-file="$INPUT_FILE")
-# بدون -Z، aria2 چند لینک را mirror یک فایل حساب می‌کند؛ با -Z هر لینک یک دانلود جداست
+# Without --force-sequential, multiple URLs are treated as mirrors of one file
 (( ${#URLS[@]} > 1 )) && CMD+=(--force-sequential=true)
 CMD+=("${URLS[@]}")
 
@@ -119,10 +119,10 @@ if (( PRINT_ONLY )); then
 fi
 
 command -v aria2c >/dev/null || {
-  echo "aria2c نصب نیست. نصب: sudo apt install aria2  (یا: sudo pacman -S aria2 / sudo dnf install aria2)" >&2
+  echo "aria2c is not installed. Install via: sudo apt install aria2 (or: sudo pacman -S aria2 / sudo dnf install aria2)" >&2
   exit 1
 }
 
 mkdir -p "$DIR"
-echo "⬇  دانلود با $CONN اتصال در: $DIR"
+echo "Downloading with $CONN connections to: $DIR"
 exec "${CMD[@]}"
